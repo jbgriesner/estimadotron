@@ -53,12 +53,13 @@ voidEstimate =
 type alias Model =
     { idCounter : Int
     , estimates : List Estimate
+    , samples : List Float
     }
 
 
 initialModel : Model
 initialModel =
-    Model 0 [ voidEstimate ]
+    Model 0 [ voidEstimate ] []
 
 
 type Msg
@@ -67,6 +68,7 @@ type Msg
     | ChangeDescription Int String
     | ChangeMin Int String
     | ChangeMax Int String
+    | NormalList (List Float)
 
 
 type UpdateEstimate
@@ -104,6 +106,56 @@ getNewEstimates n v m t =
             :: prevEstimates
 
 
+monteCarloSamples : Int -> Float -> Float -> Int -> Random.Generator (List Float)
+monteCarloSamples numSamples a b seed =
+    let
+        intervalLength =
+            b - a
+
+        samplesPerIteration =
+            numSamples // 1000
+
+        iterations =
+            numSamples // samplesPerIteration
+
+        lower =
+            -1.0
+
+        upper =
+            1.0
+
+        midpoint =
+            (lower + upper) / 2.0
+
+        generator =
+            StatRandom.normal 0 1
+
+        sampleFunction x =
+            (intervalLength * x) + a
+
+        acceptSample x =
+            let
+                y =
+                    -- Random.generate generator seed |> Tuple.second
+                    Random.generate generator seed |> Tuple.second
+            in
+            if (y < (1.0 / (sqrt 2.0 * pi))) * Basics.e ^ ((-1.0 * (x - midpoint) * (x - midpoint)) / 2.0) then
+                True
+
+            else
+                False
+
+        monteCarloIteration acc _ =
+            let
+                acceptedSamples =
+                    List.range 1 samplesPerIteration
+                        |> List.map (\_ -> Random.float lower upper |> acceptSample |> sampleFunction)
+            in
+            acceptedSamples :: acc
+    in
+    Random.list iterations (monteCarloIteration []) |> Random.map List.concat
+
+
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
@@ -112,6 +164,11 @@ update msg model =
                 | idCounter = model.idCounter + 1
                 , estimates = model.estimates ++ [ emptyEstimate model ]
               }
+            , Random.generate NormalList (StatRandom.generateList 1000 (StatRandom.normal 2 0.5))
+            )
+
+        NormalList list ->
+            ( { model | samples = list }
             , Cmd.none
             )
 
@@ -160,26 +217,26 @@ view model =
         mainList =
             MList.list MList.config firstEstimate tailEstimates
     in
-    Html.div [ Typography.typography ] <|
-        [ addButton
-        , mainList
-        , Element.layout
-            [ Font.size 16
-            , Font.family
-                [ Font.typeface "Helvetica"
-                , Font.sansSerif
-                ]
-            , Element.height fill
+    Element.layout
+        [ Font.size 16
+        , Font.family
+            [ Font.typeface "Helvetica"
+            , Font.sansSerif
             ]
-            (normal model)
-        , div [] <|
-            [ HistogramChart.view [ 1.0, 2.0, 3.0, 4.0, 5.0, 5.0 ] ( 0, 4 ) 10 10 ]
+        , Element.height fill
+        , htmlAttribute <| Typography.typography
         ]
+    <|
+        Element.row
+            []
+            [ Element.column [ Element.alignTop ] [ addButton |> Element.html, mainList |> Element.html ]
+            , normal model
+            ]
 
 
 box : String -> List (Element Msg) -> Element Msg
 box id_ cc =
-    el [ Element.width (px 1000), Element.height shrink, Border.width 1, Border.color black, Border.rounded 5, Border.shadow { offset = ( 0, 0 ), size = 10.0, blur = 50.0, color = black }, centerX, padding 30 ]
+    el [ Element.alignTop, Element.alignRight, Element.width (px 800), Element.height shrink, Border.width 1, Border.color black, Border.rounded 5, Border.shadow { offset = ( 0, 0 ), size = 10.0, blur = 50.0, color = black }, centerX, padding 30 ]
         (column [ htmlAttribute (id id_) ]
             cc
         )
@@ -198,8 +255,8 @@ descriptionTitle title =
 normal : Model -> Element Msg
 normal model =
     box "Normal"
-        [ descriptionTitle "Normal Distribution"
-        , el [ Element.width <| px 900, Element.height fill ] (HistogramChart.view [ 1.0, 2.0, 3.0, 4.0, 5.0, 5.0 ] ( 0, 4 ) 20 20 |> Element.html)
+        [ descriptionTitle "Monte Carlo Sampled Distribution"
+        , el [ Element.width <| px 750, Element.height fill ] (HistogramChart.view model.samples ( 0, 4 ) 20 20 |> Element.html)
         ]
 
 
